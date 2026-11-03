@@ -2,7 +2,7 @@
 
 Public marketing site for **Liberty Scoping** (https://libertyscoping.com), a nationwide legal transcription and transcript production business. Black-and-antique-gold design built around the supplied Lady Justice artwork.
 
-Stack: Next.js 16 (App Router) · TypeScript (strict) · Tailwind CSS 4 · Lucide React · `next/font` (Cormorant Garamond + Inter). Everything is statically prerendered; the only client JavaScript is the mobile menu and the active-link highlighting.
+Stack: Next.js 16 (App Router) · TypeScript (strict) · Tailwind CSS 4 · Lucide React · `next/font` (Cormorant Garamond + Inter). Everything is statically prerendered; the only client JavaScript is the mobile menu, the active-link highlighting, and the contact inquiry form.
 
 ## Run locally
 
@@ -11,6 +11,7 @@ npm install
 npm run dev          # http://localhost:3000
 npm run build && npm start   # production build
 npm run lint
+npm test                # unit tests; `npm run test:emulator` adds Firestore-emulator tests
 ```
 
 Copy `.env.example` to `.env.local` to configure environment variables.
@@ -19,6 +20,8 @@ Copy `.env.example` to `.env.local` to configure environment variables.
 | --- | --- |
 | `NEXT_PUBLIC_SITE_URL` | Canonical origin used for metadata, sitemap, robots, and structured data. Defaults to `https://libertyscoping.com`. |
 | `NEXT_PUBLIC_PORTAL_URL` | Origin of the separate customer portal (for example `https://portal.libertyscoping.com`). Leave blank until the portal is live. |
+
+The contact form's server-side variables (Firestore access, email delivery) are documented in [`docs/inquiry-system.md`](docs/inquiry-system.md).
 
 ## Pages
 

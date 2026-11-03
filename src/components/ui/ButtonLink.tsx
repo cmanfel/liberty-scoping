@@ -20,6 +20,14 @@ const variants: Record<Variant, string> = {
     "px-3 text-gold-bright hover:text-ivory underline-offset-4 hover:underline",
 };
 
+export function buttonClasses(
+  variant: Variant = "primary",
+  size: keyof typeof sizes = "md",
+  className = "",
+): string {
+  return `${base} ${variant === "ghost" ? "min-h-11" : sizes[size]} ${variants[variant]} ${className}`;
+}
+
 interface ButtonLinkProps extends Omit<
   ComponentProps<"a">,
   "href" | "className" | "children"
@@ -41,7 +49,7 @@ export function ButtonLink({
   children,
   ...rest
 }: ButtonLinkProps) {
-  const classes = `${base} ${variant === "ghost" ? "min-h-11" : sizes[size]} ${variants[variant]} ${className}`;
+  const classes = buttonClasses(variant, size, className);
   const isExternal = external ?? /^(https?:|mailto:|tel:)/.test(href);
   if (isExternal) {
     return (
