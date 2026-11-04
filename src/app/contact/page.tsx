@@ -1,4 +1,5 @@
 import { Mail, MapPin } from "lucide-react";
+import { InquiryForm } from "@/components/forms/InquiryForm";
 import { ButtonLink } from "@/components/ui/ButtonLink";
 import { IconBadge } from "@/components/ui/IconBadge";
 import { PageHero } from "@/components/ui/PageHero";
@@ -116,6 +117,28 @@ export default function ContactPage() {
               </a>
               .
             </p>
+          </div>
+        </div>
+      </Section>
+
+      <Section
+        tone="ink"
+        labelledBy="inquiry-title"
+        id="inquiry"
+        className="border-t border-line"
+      >
+        <div className="mx-auto max-w-3xl">
+          <p className="eyebrow mb-4">Send an inquiry</p>
+          <h2 id="inquiry-title" className="display-2">
+            Inquire online
+          </h2>
+          <div aria-hidden="true" className="gold-rule mt-6 w-28" />
+          <p className="mt-6 text-lg leading-relaxed text-fog">
+            Share your email and a short description of your project. You will
+            receive a reference number and a confirmation email.
+          </p>
+          <div className="mt-8">
+            <InquiryForm />
           </div>
         </div>
       </Section>
