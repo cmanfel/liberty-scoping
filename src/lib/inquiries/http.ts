@@ -93,10 +93,30 @@ function deliveryDeps(deps: HandlerDeps, config: InquiryConfig): DeliveryDeps {
   };
 }
 
+/**
+ * Logs a server-side failure with a stage label and a short, non-sensitive
+ * description (error name/code and a truncated message). Never logs request
+ * bodies, email addresses or credentials. Visitors only ever see a generic message.
+ */
+export function logFailure(stage: string, error: unknown): void {
+  const e = error as { name?: unknown; code?: unknown; message?: unknown } | null;
+  console.error("[inquiries] failure", {
+    stage,
+    name: typeof e?.name === "string" ? e.name : typeof error,
+    code:
+      typeof e?.code === "string" || typeof e?.code === "number" ? e.code : undefined,
+    message:
+      typeof e?.message === "string"
+        ? e.message.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]").slice(0, 400)
+        : undefined,
+  });
+}
+
 export async function handleInquiryRequest(
   request: Request,
   deps: HandlerDeps,
 ): Promise<Response> {
+  let stage = "start";
   try {
     const config = deps.getConfig();
 
@@ -137,12 +157,15 @@ export async function handleInquiryRequest(
       );
     }
 
+    stage = "firestore_client";
     const db = deps.getDb();
     const delivery = deliveryDeps(deps, config);
     const timeout = deps.emailTimeoutMillis ?? 10_000;
 
+    stage = "idempotency_lookup";
     const existing = await findByIdempotencyKey(db, input, config.hashSalt);
     if (existing) {
+      stage = "email_delivery";
       await withTimeout(deliverInquiryEmails(db, existing.inquiryId, delivery), timeout);
       return json(200, {
         ok: true,
@@ -151,6 +174,7 @@ export async function handleInquiryRequest(
       });
     }
 
+    stage = "rate_limit";
     const ip = clientIp(request);
     const ipLimit = await consumeRateLimit(
       db,
@@ -177,12 +201,14 @@ export async function handleInquiryRequest(
       );
     }
 
+    stage = "create_inquiry";
     const created = await createInquiry(db, input, {
       salt: config.hashSalt,
       clientIp: ip,
       userAgent: request.headers.get("user-agent"),
     });
 
+    stage = "email_delivery";
     await withTimeout(deliverInquiryEmails(db, created.inquiryId, delivery), timeout);
 
     return json(created.duplicate ? 200 : 201, {
@@ -198,9 +224,7 @@ export async function handleInquiryRequest(
         "This submission could not be accepted. Please reload the page and try again.",
       );
     }
-    console.error("[inquiries] submission failed", {
-      name: error instanceof Error ? error.name : "unknown",
-    });
+    logFailure(stage, error);
     return failure(500, "server_error", GENERIC_ERROR);
   }
 }
@@ -219,8 +243,8 @@ export async function handleRetryRequest(
   try {
     const result = await retryUnsentEmails(deps.getDb(), deliveryDeps(deps, config));
     return json(200, { ok: true, ...result });
-  } catch {
-    console.error("[inquiries] retry failed");
+  } catch (error) {
+    logFailure("retry", error);
     return failure(500, "server_error", GENERIC_ERROR);
   }
 }
