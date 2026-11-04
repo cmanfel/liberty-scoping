@@ -1,7 +1,9 @@
+import { createResendMailer } from "./resend";
+
 /**
  * Provider-agnostic mail interface. The inquiry system only depends on this
- * contract; a real HTTP email API adapter is added in `getMailer()` once the
- * provider has been chosen. See docs/inquiry-system.md.
+ * contract; provider adapters are selected in `getMailer()`.
+ * See docs/inquiry-system.md.
  */
 
 export interface MailMessage {
@@ -62,11 +64,12 @@ let devMockMailer: MockMailer | null = null;
  * INQUIRY_MAIL_PROVIDER:
  *   unset    -> no mailer; sends fail as `mailer_not_configured` (retryable later)
  *   "mock"   -> MockMailer (blocked on Vercel production)
- *   <name>   -> add the provider adapter here once chosen
+ *   "resend" -> Resend HTTP API (requires INQUIRY_MAIL_API_KEY)
  */
 export function getMailer(
   provider: string | null,
   env: Record<string, string | undefined> = process.env,
+  fetchImpl?: typeof fetch,
 ): Mailer {
   if (!provider) {
     throw new MailerNotConfiguredError("INQUIRY_MAIL_PROVIDER is not set");
@@ -79,6 +82,13 @@ export function getMailer(
     }
     devMockMailer ??= new MockMailer();
     return devMockMailer;
+  }
+  if (provider === "resend") {
+    const apiKey = env.INQUIRY_MAIL_API_KEY?.trim();
+    if (!apiKey) {
+      throw new MailerNotConfiguredError("INQUIRY_MAIL_API_KEY is not set");
+    }
+    return createResendMailer({ apiKey, fetch: fetchImpl });
   }
   throw new MailerNotConfiguredError(`Unknown mail provider: ${provider}`);
 }

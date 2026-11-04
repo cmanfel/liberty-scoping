@@ -10,6 +10,7 @@ import {
   type DeliveryDeps,
 } from "@/lib/inquiries/service";
 import { MailerError, MockMailer } from "@/lib/inquiries/mailer";
+import { createResendMailer } from "@/lib/inquiries/resend";
 import { consumeRateLimit } from "@/lib/inquiries/rate-limit";
 import { clearEmulator, emulatorAvailable, testDb } from "./emulator";
 
@@ -48,10 +49,21 @@ describe.skipIf(!emulatorAvailable)("inquiry service (Firestore emulator)", () =
     expect(counter.lastSequence).toBe(2);
   });
 
-  it("resets the sequence each calendar year", async () => {
-    await createInquiry(db, input(), { ...ctx, now: new Date("2026-12-31T23:59:00Z") });
-    const next = await createInquiry(db, input(), { ...ctx, now: new Date("2027-01-01T00:01:00Z") });
-    expect(next.referenceNumber).toBe("LS-2027-000001");
+  it("resets the sequence each calendar year in America/New_York", async () => {
+    const before = await createInquiry(db, input(), { ...ctx, now: new Date("2027-01-01T04:30:00Z") }); // 2026-12-31 23:30 EST
+    const after = await createInquiry(db, input(), { ...ctx, now: new Date("2027-01-01T05:30:00Z") }); // 2027-01-01 00:30 EST
+    expect(before.referenceNumber).toBe("LS-2026-000001");
+    expect(after.referenceNumber).toBe("LS-2027-000001");
+    const counters = await db.collection(COLLECTIONS.counters).get();
+    expect(counters.docs.map((d) => d.id).sort()).toEqual(["inquiries-2026", "inquiries-2027"]);
+  });
+
+  it("uses the New York year inside the UTC-vs-ET mismatch window", async () => {
+    // 2027-01-01 02:00 UTC is still 2026-12-31 21:00 in New York.
+    const a = await createInquiry(db, input(), { ...ctx, now: new Date("2027-01-01T02:00:00Z") });
+    const b = await createInquiry(db, input(), { ...ctx, now: new Date("2027-01-01T03:59:59Z") });
+    expect(a.referenceNumber).toBe("LS-2026-000001");
+    expect(b.referenceNumber).toBe("LS-2026-000002");
   });
 
   it("never issues duplicate reference numbers under concurrency", async () => {
@@ -139,6 +151,30 @@ describe.skipIf(!emulatorAvailable)("inquiry service (Firestore emulator)", () =
       expect(third).toEqual({ business: "sent", confirmation: "sent" });
       expect(mailer.outbox).toHaveLength(2);
       expect((await db.collection(COLLECTIONS.inquiries).get()).size).toBe(1);
+    });
+
+    it("maps Resend failures to failed status, then sends on retry (mock fetch)", async () => {
+      const created = await createInquiry(db, input(), ctx);
+      let calls = 0;
+      let healthy = false;
+      const fetchMock = (async () => {
+        calls += 1;
+        return healthy
+          ? new Response(JSON.stringify({ id: `re_${calls}` }), { status: 200 })
+          : new Response(JSON.stringify({ name: "rate_limit_exceeded", message: "secret detail" }), { status: 429 });
+      }) as unknown as typeof fetch;
+      const deps = { ...makeDeps(new MockMailer()), getMailer: () => createResendMailer({ apiKey: "k", fetch: fetchMock }) };
+
+      expect(await deliverInquiryEmails(db, created.inquiryId, deps)).toEqual({ business: "failed", confirmation: "failed" });
+      const failed = (await db.collection(COLLECTIONS.inquiries).doc(created.inquiryId).get()).data()!;
+      expect(failed.businessEmailLastError).toContain("resend_rate_limited");
+      expect(failed.businessEmailLastError).not.toContain("secret detail");
+
+      healthy = true;
+      expect(await deliverInquiryEmails(db, created.inquiryId, deps)).toEqual({ business: "sent", confirmation: "sent" });
+      const sent = (await db.collection(COLLECTIONS.inquiries).doc(created.inquiryId).get()).data()!;
+      expect(sent.businessEmailProviderMessageId).toMatch(/^re_/);
+      expect(sent.businessEmailLastError).toBeNull();
     });
 
     it("records not-configured failures without losing the inquiry", async () => {

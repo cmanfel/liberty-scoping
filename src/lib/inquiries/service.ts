@@ -1,6 +1,6 @@
 import { FieldValue, Timestamp, type Firestore } from "@google-cloud/firestore";
 import { COLLECTIONS, EMAIL_RULES } from "./constants";
-import { formatReference } from "./reference";
+import { REFERENCE_TIME_ZONE, formatReference, referenceYearFor } from "./reference";
 import { saltedHash, sha256Hex } from "./hash";
 import {
   MailerError,
@@ -74,7 +74,7 @@ export async function createInquiry(
   input: InquiryInput,
   ctx: CreateInquiryContext,
 ): Promise<CreateInquiryResult> {
-  const year = (ctx.now ?? new Date()).getUTCFullYear();
+  const year = referenceYearFor(ctx.now ?? new Date());
   const idemRef = db
     .collection(COLLECTIONS.idempotency)
     .doc(idempotencyDocId(ctx.salt, input.idempotencyKey));
@@ -104,7 +104,12 @@ export async function createInquiry(
 
     tx.set(
       counterRef,
-      { year, lastSequence: sequence, updatedAt: FieldValue.serverTimestamp() },
+      {
+        year,
+        timeZone: REFERENCE_TIME_ZONE,
+        lastSequence: sequence,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
       { merge: true },
     );
 

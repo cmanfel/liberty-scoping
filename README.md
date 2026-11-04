@@ -21,7 +21,7 @@ Copy `.env.example` to `.env.local` to configure environment variables.
 | `NEXT_PUBLIC_SITE_URL` | Canonical origin used for metadata, sitemap, robots, and structured data. Defaults to `https://libertyscoping.com`. |
 | `NEXT_PUBLIC_PORTAL_URL` | Origin of the separate customer portal (for example `https://portal.libertyscoping.com`). Leave blank until the portal is live. |
 
-The contact form's server-side variables (Firestore access, email delivery) are documented in [`docs/inquiry-system.md`](docs/inquiry-system.md).
+The contact form's server-side variables (Firestore access, email delivery) are documented in [`docs/inquiry-system.md`](docs/inquiry-system.md), including the Resend setup. `INQUIRY_BUSINESS_EMAIL` is a Vercel env value (currently a testing mailbox) to update later.
 
 ## Pages
 

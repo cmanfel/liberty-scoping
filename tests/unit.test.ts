@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatReference } from "@/lib/inquiries/reference";
+import { formatReference, referenceYearFor } from "@/lib/inquiries/reference";
 import {
   isValidEmail,
   looksLikeBot,
@@ -22,6 +22,26 @@ describe("reference numbers", () => {
   it("formats LS-YYYY-NNNNNN", () => {
     expect(formatReference(2026, 1)).toBe("LS-2026-000001");
     expect(formatReference(2027, 123456)).toBe("LS-2027-123456");
+  });
+});
+
+describe("reference year (America/New_York)", () => {
+  it("rolls over at midnight Eastern, not UTC", () => {
+    expect(referenceYearFor(new Date("2027-01-01T04:59:59Z"))).toBe(2026); // 23:59:59 EST
+    expect(referenceYearFor(new Date("2027-01-01T05:00:00Z"))).toBe(2027); // 00:00:00 EST
+    expect(referenceYearFor(new Date("2026-12-31T23:30:00-05:00"))).toBe(2026);
+    expect(referenceYearFor(new Date("2027-01-01T00:30:00-05:00"))).toBe(2027);
+  });
+
+  it("differs from UTC between 19:00 and 24:00 ET on Dec 31", () => {
+    const d = new Date("2027-01-01T02:00:00Z");
+    expect(d.getUTCFullYear()).toBe(2027);
+    expect(referenceYearFor(d)).toBe(2026);
+  });
+
+  it("is unaffected by daylight time mid-year", () => {
+    expect(referenceYearFor(new Date("2026-07-01T03:59:00Z"))).toBe(2026);
+    expect(referenceYearFor(new Date("2026-06-15T12:00:00Z"))).toBe(2026);
   });
 });
 
@@ -109,6 +129,10 @@ describe("mailer selection", () => {
   it("is not configured without a provider", () => {
     expect(() => getMailer(null)).toThrow(MailerNotConfiguredError);
     expect(() => getMailer("someprovider")).toThrow(MailerNotConfiguredError);
+  });
+  it("requires an API key for resend", () => {
+    expect(() => getMailer("resend", {})).toThrow(MailerNotConfiguredError);
+    expect(getMailer("resend", { INQUIRY_MAIL_API_KEY: "re_test" })).toBeTruthy();
   });
   it("blocks the mock mailer in production", () => {
     expect(() => getMailer("mock", { VERCEL_ENV: "production" })).toThrow(

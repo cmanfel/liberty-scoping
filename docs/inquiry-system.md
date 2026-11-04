@@ -11,7 +11,7 @@
 5. Send both emails (each claimed with a lease so concurrent calls never double-send); record status per email.
 6. Respond `{ ok, referenceNumber, duplicate }`. Email failures never fail the request or delete the inquiry.
 
-Reference numbers use the **UTC** calendar year.
+Reference numbers use the **America/New_York** calendar year (EST in winter, EDT in summer; the new-year rollover is always EST, i.e. UTC-5). `LS-2026-...` therefore ends at 2026-12-31 23:59:59 ET (2027-01-01 04:59:59 UTC) and `LS-2027-000001` is issued from 2027-01-01 00:00:00 ET. Between 19:00 and 24:00 ET on Dec 31 the UTC date is already the next year but references still use the old year. The counter document records `timeZone`.
 
 ## Firestore structure (all new top-level collections; nothing under `users/`)
 
@@ -30,6 +30,8 @@ Vercel OIDC token -> Google STS (Workload Identity Federation) -> impersonates `
 
 ## Environment variables
 
+Set in Vercel for the **Production** environment only. All are server-only (no `NEXT_PUBLIC_` prefix).
+
 | Name | Value |
 | --- | --- |
 | `FIREBASE_PROJECT_ID` | `stenofy-4e684` |
@@ -37,18 +39,23 @@ Vercel OIDC token -> Google STS (Workload Identity Federation) -> impersonates `
 | `GCP_WORKLOAD_IDENTITY_POOL_ID` | `liberty-scoping-vercel` |
 | `GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID` | `vercel` |
 | `GCP_SERVICE_ACCOUNT_EMAIL` | `liberty-scoping-inquiries@stenofy-4e684.iam.gserviceaccount.com` |
-| `INQUIRY_BUSINESS_EMAIL` | address that receives inquiries (not hardcoded) |
+| `INQUIRY_MAIL_PROVIDER` | `resend` |
+| `INQUIRY_MAIL_API_KEY` | Resend API key (sending access only, scoped to libertyscoping.com). Secret. |
 | `INQUIRY_FROM_EMAIL` | `contact@libertyscoping.com` |
-| `INQUIRY_MAIL_PROVIDER` | unset until a provider adapter exists; `mock` is for local use only and is refused when `VERCEL_ENV=production` |
-| `INQUIRY_HASH_SALT` | long random string |
-| `INQUIRY_RETRY_TOKEN` | optional; enables `POST /api/inquiries/retry` |
-| provider API key | name decided with the provider (proposed `INQUIRY_MAIL_API_KEY`) |
+| `INQUIRY_BUSINESS_EMAIL` | Address that receives inquiries. **Set to a testing mailbox for now; replace this Vercel value with the real business mailbox later (no code change; redeploy after saving).** It is never hardcoded in the repo. |
+| `INQUIRY_HASH_SALT` | Long random string (hashing of IPs, idempotency keys, rate-limit subjects) |
+| `INQUIRY_RETRY_TOKEN` | Optional random string; enables `POST /api/inquiries/retry` |
 
-All are server-only (no `NEXT_PUBLIC_` prefix). Until the mail provider is configured, inquiries are still stored and returned a reference number, and both emails are recorded as `failed` with `mailer_not_configured`; they are sent later by the retry endpoint or a repeat submission.
+`INQUIRY_MAIL_PROVIDER=mock` is for local development only and is refused when `VERCEL_ENV=production`. If the provider or key is missing, inquiries are still stored and given a reference number, and both emails are recorded as `failed` with `mailer_not_configured`; they are sent later by the retry endpoint or a repeat submission. Note: after changing env vars in Vercel, redeploy so they take effect.
 
-## Email provider
+## Resend setup
 
-`src/lib/inquiries/mailer.ts` defines `Mailer.send({from,to,replyTo,subject,text,html}) -> {providerMessageId}`. To add a provider (an HTTP API), implement that interface in a new file and return it from `getMailer()` for its `INQUIRY_MAIL_PROVIDER` name. Throw `MailerError(message, code)` on failure. Nothing else changes.
+1. Create a Resend account and **add the domain** `libertyscoping.com` (Resend -> Domains). Use the region closest to the Vercel functions.
+2. Add the DNS records Resend shows for the domain at the DNS host: the **SPF** record (a TXT, and an MX for the `send` return-path subdomain) and the **DKIM** record (TXT at `resend._domainkey`). Copy the exact names/values from the Resend dashboard; they are account-specific. Wait until the domain shows **Verified**. Optionally add a DMARC TXT (`_dmarc`), e.g. `v=DMARC1; p=none; rua=mailto:<reports address>`.
+3. Create an **API key** (Resend -> API Keys) with permission **Sending access** (not Full access) and the **domain restricted to libertyscoping.com**. Store it only in Vercel as `INQUIRY_MAIL_API_KEY`.
+4. Set the Vercel env vars above, redeploy, and send one real test inquiry from a mailbox you control. Check the business mail arrives with Reply-To set to the inquirer, the acknowledgment arrives, both show the same reference, and the Firestore statuses are `sent`.
+
+Resend errors are mapped to stored codes (`resend_auth`, `resend_rate_limited`, `resend_server_error`, `resend_rejected`, `resend_timeout`, `resend_network`) and the email is marked `failed` and retryable; visitors never see provider details and still receive their reference number.
 
 ## Retrying unsent emails
 
@@ -62,8 +69,8 @@ npm test                 # unit tests (integration tests skip without the emulat
 npm run test:emulator    # everything, against the local Firestore emulator (needs Java 21+)
 ```
 
-The emulator project is `demo-liberty-scoping`; tests refuse to run against anything but a local emulator host and use only the mock mailer.
+The emulator project is `demo-liberty-scoping`; tests refuse to run against anything but a local emulator host and use only the mock mailer or a mocked `fetch` (no real Resend calls).
 
 ## One-time Google Cloud / Vercel setup
 
-See `scripts/gcp/setup-workload-identity.sh` (creates the pool, provider, and impersonation binding) and the checklist in the pull request.
+Done on 2026-11-04 with `scripts/gcp/setup-workload-identity.sh` (pool `liberty-scoping-vercel`, provider `vercel`, impersonation restricted to `owner:cmanfels-projects:project:liberty-scoping:environment:production`). In Vercel, OIDC federation (Team issuer) must be enabled for the project.
