@@ -1,6 +1,7 @@
 import type { Firestore } from "@google-cloud/firestore";
 import { LIMITS, RATE_LIMITS } from "./constants";
 import type { InquiryConfig } from "./config";
+import { tokenMatches } from "./diagnostics";
 import { saltedHash } from "./hash";
 import type { Mailer } from "./mailer";
 import { consumeRateLimit } from "./rate-limit";
@@ -236,8 +237,7 @@ export async function handleRetryRequest(
 ): Promise<Response> {
   const config = deps.getConfig();
   if (!config.retryToken) return new Response(null, { status: 404 });
-  const supplied = request.headers.get("authorization") ?? "";
-  if (supplied !== `Bearer ${config.retryToken}`) {
+  if (!tokenMatches(request.headers.get("authorization"), config.retryToken)) {
     return new Response(null, { status: 401 });
   }
   try {

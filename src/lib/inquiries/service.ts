@@ -1,5 +1,6 @@
 import { FieldValue, Timestamp, type Firestore } from "@google-cloud/firestore";
 import { runTransactionWithRetry } from "./transactions";
+import { logEvent, sanitizeDiagnostic } from "./diagnostics";
 import { COLLECTIONS, EMAIL_RULES } from "./constants";
 import { REFERENCE_TIME_ZONE, formatReference, referenceYearFor } from "./reference";
 import { saltedHash, sha256Hex } from "./hash";
@@ -130,12 +131,20 @@ export async function createInquiry(
       businessEmailSentAt: null,
       businessEmailLastError: null,
       businessEmailProviderMessageId: null,
+      businessEmailLastHttpStatus: null,
+      businessEmailLastErrorCode: null,
+      businessEmailLastErrorMessage: null,
+      businessEmailLastDurationMs: null,
       confirmationEmailStatus: "pending",
       confirmationEmailAttempts: 0,
       confirmationEmailLastAttemptAt: null,
       confirmationEmailSentAt: null,
       confirmationEmailLastError: null,
       confirmationEmailProviderMessageId: null,
+      confirmationEmailLastHttpStatus: null,
+      confirmationEmailLastErrorCode: null,
+      confirmationEmailLastErrorMessage: null,
+      confirmationEmailLastDurationMs: null,
       idempotencyKeyHash: idemRef.id,
       contentHash,
       clientIpHash: ctx.clientIp ? saltedHash(ctx.salt, `ip:${ctx.clientIp}`) : null,
@@ -165,7 +174,7 @@ export interface DeliveryOutcome {
 }
 
 type ClaimResult =
-  | { claimed: true; inquiry: InquiryDoc }
+  | { claimed: true; inquiry: InquiryDoc; attempt: number }
   | { claimed: false; status: EmailStatus };
 
 const FIELDS = {
@@ -176,6 +185,10 @@ const FIELDS = {
     sentAt: "businessEmailSentAt",
     lastError: "businessEmailLastError",
     messageId: "businessEmailProviderMessageId",
+    httpStatus: "businessEmailLastHttpStatus",
+    errorCode: "businessEmailLastErrorCode",
+    errorMessage: "businessEmailLastErrorMessage",
+    durationMs: "businessEmailLastDurationMs",
   },
   confirmation: {
     status: "confirmationEmailStatus",
@@ -184,6 +197,10 @@ const FIELDS = {
     sentAt: "confirmationEmailSentAt",
     lastError: "confirmationEmailLastError",
     messageId: "confirmationEmailProviderMessageId",
+    httpStatus: "confirmationEmailLastHttpStatus",
+    errorCode: "confirmationEmailLastErrorCode",
+    errorMessage: "confirmationEmailLastErrorMessage",
+    durationMs: "confirmationEmailLastDurationMs",
   },
 } as const;
 
@@ -217,13 +234,40 @@ async function claimEmail(
       [f.lastAttemptAt]: Timestamp.now(),
       updatedAt: FieldValue.serverTimestamp(),
     });
-    return { claimed: true, inquiry: snap.data() as InquiryDoc };
+    return { claimed: true, inquiry: snap.data() as InquiryDoc, attempt: attempts + 1 };
   });
 }
 
 function describeError(error: unknown): string {
   if (error instanceof MailerError) return `${error.code}: ${error.message}`.slice(0, 300);
   return "unexpected_error: email send failed".slice(0, 300);
+}
+
+interface SendDiagnostics {
+  httpStatus: number | null;
+  errorCode: string | null;
+  providerCode: string | null;
+  errorMessage: string | null;
+  durationMs: number;
+}
+
+function diagnosticsFor(error: unknown, elapsedMs: number): SendDiagnostics {
+  if (error instanceof MailerError) {
+    return {
+      httpStatus: error.details.httpStatus ?? null,
+      errorCode: error.code,
+      providerCode: error.details.providerCode ?? null,
+      errorMessage: sanitizeDiagnostic(error.details.providerMessage ?? error.message),
+      durationMs: error.details.durationMs ?? elapsedMs,
+    };
+  }
+  return {
+    httpStatus: null,
+    errorCode: "unexpected_error",
+    providerCode: null,
+    errorMessage: sanitizeDiagnostic(error instanceof Error ? error.message : null),
+    durationMs: elapsedMs,
+  };
 }
 
 async function sendOne(
@@ -244,6 +288,7 @@ async function sendOne(
     message: inquiry.message,
     createdAt: inquiry.createdAt.toDate(),
   };
+  const startedAt = Date.now();
 
   try {
     if (!deps.fromEmail) {
@@ -258,18 +303,51 @@ async function sendOne(
         ? buildBusinessEmail(template, deps.fromEmail, deps.businessEmail as string)
         : buildConfirmationEmail(template, deps.fromEmail);
     const result = await mailer.send(message);
+    const durationMs = result.durationMs ?? Date.now() - startedAt;
+    const httpStatus = result.httpStatus ?? null;
+    logEvent("email_send", {
+      reference: inquiry.referenceNumber,
+      email: kind,
+      attempt: claim.attempt,
+      outcome: "sent",
+      httpStatus,
+      durationMs,
+      providerMessageId: result.providerMessageId,
+    });
     await ref.update({
       [f.status]: "sent",
       [f.sentAt]: FieldValue.serverTimestamp(),
       [f.lastError]: null,
       [f.messageId]: result.providerMessageId,
+      [f.httpStatus]: httpStatus,
+      [f.errorCode]: null,
+      [f.errorMessage]: null,
+      [f.durationMs]: durationMs,
       updatedAt: FieldValue.serverTimestamp(),
     });
     return "sent";
   } catch (error) {
+    const diag = diagnosticsFor(error, Date.now() - startedAt);
+    logEvent("email_send", {
+      reference: inquiry.referenceNumber,
+      email: kind,
+      attempt: claim.attempt,
+      outcome: diag.errorCode === "mailer_not_configured" ? "not_configured" : "failed",
+      httpStatus: diag.httpStatus,
+      errorCode: diag.errorCode,
+      providerCode: diag.providerCode,
+      message: diag.errorMessage,
+      durationMs: diag.durationMs,
+    });
     await ref.update({
       [f.status]: "failed",
       [f.lastError]: describeError(error),
+      [f.httpStatus]: diag.httpStatus,
+      [f.errorCode]: diag.providerCode
+        ? `${diag.errorCode}:${diag.providerCode}`.slice(0, 100)
+        : diag.errorCode,
+      [f.errorMessage]: diag.errorMessage,
+      [f.durationMs]: diag.durationMs,
       updatedAt: FieldValue.serverTimestamp(),
     });
     return "failed";

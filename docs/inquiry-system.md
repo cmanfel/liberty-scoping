@@ -17,7 +17,7 @@ Reference numbers use the **America/New_York** calendar year (EST in winter, EDT
 
 | Path | Purpose |
 | --- | --- |
-| `libertyScopingInquiries/{autoId}` | The inquiry: `referenceNumber`, `referenceYear`, `referenceSequence`, `email`, `message` (original text), `status` (`new`), `source`, `createdAt`, `updatedAt`, per-email fields `businessEmail*` / `confirmationEmail*` (`Status` = `pending/sending/sent/failed`, `Attempts`, `LastAttemptAt`, `SentAt`, `LastError`, `ProviderMessageId`), `idempotencyKeyHash`, `contentHash`, `clientIpHash` (salted hash), `userAgent`. |
+| `libertyScopingInquiries/{autoId}` | The inquiry: `referenceNumber`, `referenceYear`, `referenceSequence`, `email`, `message` (original text), `status` (`new`), `source`, `createdAt`, `updatedAt`, per-email fields `businessEmail*` / `confirmationEmail*` (`Status` = `pending/sending/sent/failed`, `Attempts`, `LastAttemptAt`, `SentAt`, `LastError`, `ProviderMessageId`, and diagnostics `LastHttpStatus`, `LastErrorCode` (e.g. `resend_rejected:validation_error`), `LastErrorMessage` (redacted, 200 chars max), `LastDurationMs`), `idempotencyKeyHash`, `contentHash`, `clientIpHash` (salted hash), `userAgent`. |
 | `libertyScopingCounters/inquiries-{year}` | `{ year, lastSequence, updatedAt }`. |
 | `libertyScopingIdempotency/{hash}` | `{ inquiryId, referenceNumber, contentHash, createdAt }`. |
 | `libertyScopingRateLimits/{scope-hash-window}` | `{ scope, count, windowStart, expireAt, updatedAt }`. Optional: add a Firestore TTL policy on `expireAt` to auto-delete (not required). |
@@ -62,6 +62,31 @@ Set in Vercel for the **Production** environment only. All are server-only (no `
 4. Set the Vercel env vars above, redeploy, and send one real test inquiry from a mailbox you control. Check the business mail arrives with Reply-To set to the inquirer, the acknowledgment arrives, both show the same reference, and the Firestore statuses are `sent`.
 
 Resend errors are mapped to stored codes (`resend_auth`, `resend_rate_limited`, `resend_server_error`, `resend_rejected`, `resend_timeout`, `resend_network`) and the email is marked `failed` and retryable; visitors never see provider details and still receive their reference number.
+
+## Logging and the status endpoint
+
+Vercel runtime logs (never contain the API key, Authorization header, email addresses, message bodies or full provider responses):
+
+- `[inquiries] config_check {...}` once per cold start: booleans for `INQUIRY_MAIL_PROVIDER`, `INQUIRY_MAIL_API_KEY`, `INQUIRY_FROM_EMAIL`, `INQUIRY_BUSINESS_EMAIL`, `INQUIRY_RETRY_TOKEN`, plus key shape only (`apiKeyStartsWithRe`, `apiKeyLengthBucket`, `apiKeyLooksValid`, whitespace/quote/ellipsis flags). A truncated key shows `apiKeyLooksValid:false` (and `apiKeyHasEllipsis:true` if it still contains `...`).
+- `[inquiries] email_send {...}` per send attempt: `reference`, `email` (`business|confirmation`), `attempt`, `outcome` (`sent|failed|not_configured`), `httpStatus`, `errorCode`, `providerCode`, truncated redacted `message`, `durationMs`.
+- `[inquiries] status_check {...}` per status endpoint call.
+
+`GET /api/inquiries/status` with `Authorization: Bearer $INQUIRY_RETRY_TOKEN` (constant-time compare; 401 for a wrong/missing token, 404 if `INQUIRY_RETRY_TOKEN` is unset; never cached) runs read-only checks and never sends email or writes data:
+
+```bash
+curl -s https://www.libertyscoping.com/api/inquiries/status -H "Authorization: Bearer $INQUIRY_RETRY_TOKEN"
+```
+
+The JSON has top-level `ok` (true only if every check is `ok: true`) and `checks`, each `{ ok: true|false|null, reason }` (`null` = could not be determined):
+
+| Check | Meaning / common reasons |
+| --- | --- |
+| `config` | Env presence booleans and key shape. `missing_provider`, `provider_not_resend`, `missing_api_key`, `malformed_api_key`, `missing_from_email`, `missing_business_email`. |
+| `resendKey` | `GET https://api.resend.com/domains` with the key. `resend_auth` (401/403: key rejected), `resend_network`, `resend_timeout`, `resend_rate_limited`; `send_only_key_cannot_list_domains` (`ok: null`) means the key is valid but restricted to sending, so domain status cannot be read. |
+| `resendDomain` | Whether the domain of `INQUIRY_FROM_EMAIL` (or a parent of it) is a Resend domain and its status: `from_domain_pending`, `from_domain_not_started`, `from_domain_failed`, `from_domain_not_in_resend`. Also reports `libertyscopingDomain` status. |
+| `firestore` | Read-only get of the current year counter doc. `firestore_error` with `errorName`/`errorCode`. |
+
+Resend returns HTTP 403 `validation_error` for an unverified sending domain (stored as `resend_rejected`), while 401 or 403 `invalid_api_key` means a bad key (stored as `resend_auth`).
 
 ## Troubleshooting a generic submit error
 

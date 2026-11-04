@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Timestamp } from "@google-cloud/firestore";
 import { COLLECTIONS } from "@/lib/inquiries/constants";
 import {
@@ -26,6 +26,7 @@ const input = (over: Partial<{ email: string; message: string; idempotencyKey: s
 describe.skipIf(!emulatorAvailable)("inquiry service (Firestore emulator)", () => {
   const db = emulatorAvailable ? testDb() : (null as never);
   beforeEach(clearEmulator);
+  afterEach(() => vi.restoreAllMocks());
 
   it("creates sequential reference numbers and the documented record", async () => {
     const a = await createInquiry(db, input(), { ...ctx, now: new Date("2026-05-01T00:00:00Z") });
@@ -175,6 +176,73 @@ describe.skipIf(!emulatorAvailable)("inquiry service (Firestore emulator)", () =
       const sent = (await db.collection(COLLECTIONS.inquiries).doc(created.inquiryId).get()).data()!;
       expect(sent.businessEmailProviderMessageId).toMatch(/^re_/);
       expect(sent.businessEmailLastError).toBeNull();
+    });
+
+    it("persists per-email diagnostics and logs one email_send line per call without secrets or addresses", async () => {
+      const logs: string[] = [];
+      vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
+        logs.push(args.map(String).join(" "));
+      });
+      const created = await createInquiry(db, input(), ctx);
+      let healthy = false;
+      const fetchMock = (async () =>
+        healthy
+          ? new Response(JSON.stringify({ id: "re_msg_1" }), { status: 200 })
+          : new Response(
+              JSON.stringify({
+                name: "validation_error",
+                message: "The libertyscoping.com domain is not verified for customer@example.com",
+              }),
+              { status: 403 },
+            )) as unknown as typeof fetch;
+      const deps = {
+        ...makeDeps(new MockMailer()),
+        getMailer: () => createResendMailer({ apiKey: "re_supersecretkey_1234567890", fetch: fetchMock }),
+      };
+
+      await deliverInquiryEmails(db, created.inquiryId, deps);
+      const failed = (await db.collection(COLLECTIONS.inquiries).doc(created.inquiryId).get()).data()!;
+      expect(failed.businessEmailLastHttpStatus).toBe(403);
+      expect(failed.businessEmailLastErrorCode).toBe("resend_rejected:validation_error");
+      expect(failed.businessEmailLastErrorMessage).toContain("domain is not verified");
+      expect(failed.businessEmailLastErrorMessage).not.toContain("customer@example.com");
+      expect(typeof failed.businessEmailLastDurationMs).toBe("number");
+      expect(failed.businessEmailLastAttemptAt).toBeInstanceOf(Timestamp);
+      expect(failed.confirmationEmailLastHttpStatus).toBe(403);
+
+      const failLines = logs.filter((l) => l.startsWith("[inquiries] email_send"));
+      expect(failLines).toHaveLength(2);
+      const first = JSON.parse(failLines[0].replace("[inquiries] email_send ", ""));
+      expect(first).toMatchObject({
+        reference: created.referenceNumber,
+        email: "business",
+        attempt: 1,
+        outcome: "failed",
+        httpStatus: 403,
+        errorCode: "resend_rejected",
+        providerCode: "validation_error",
+      });
+      expect(typeof first.durationMs).toBe("number");
+
+      healthy = true;
+      await deliverInquiryEmails(db, created.inquiryId, deps);
+      const sent = (await db.collection(COLLECTIONS.inquiries).doc(created.inquiryId).get()).data()!;
+      expect(sent.businessEmailProviderMessageId).toBe("re_msg_1");
+      expect(sent.businessEmailLastHttpStatus).toBe(200);
+      expect(sent.businessEmailLastErrorCode).toBeNull();
+      expect(sent.businessEmailLastErrorMessage).toBeNull();
+      const lines = logs.filter((l) => l.startsWith("[inquiries] email_send"));
+      expect(lines).toHaveLength(4);
+      expect(JSON.parse(lines[2].replace("[inquiries] email_send ", ""))).toMatchObject({
+        outcome: "sent",
+        attempt: 2,
+        httpStatus: 200,
+      });
+
+      const everything = logs.join("\n");
+      for (const secret of ["re_supersecretkey", "customer@example.com", "business@example.com", "Hello there", "Bearer"]) {
+        expect(everything).not.toContain(secret);
+      }
     });
 
     it("records not-configured failures without losing the inquiry", async () => {
