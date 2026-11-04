@@ -30,7 +30,7 @@ describe("Resend adapter (mock fetch, no network)", () => {
     const fetchMock = mockFetch(200, { id: "re_msg_123" });
     const mailer = createResendMailer({ apiKey: "re_secret_key", fetch: fetchMock as unknown as typeof fetch });
     const result = await mailer.send(message);
-    expect(result).toEqual({ providerMessageId: "re_msg_123" });
+    expect(result).toMatchObject({ providerMessageId: "re_msg_123", httpStatus: 200 });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -69,6 +69,34 @@ describe("Resend adapter (mock fetch, no network)", () => {
       expect(e.message).not.toContain("re_secret_key");
       expect(e.message).not.toContain("private details");
     }
+  });
+
+  it("treats 403 validation_error (unverified domain) as rejected, 403 invalid_api_key as auth", async () => {
+    const domain = await sendError(403, {
+      name: "validation_error",
+      message: "The libertyscoping.com domain is not verified. Contact person@example.com re_abcdef123456",
+    });
+    expect(domain.code).toBe("resend_rejected");
+    expect(domain.details.httpStatus).toBe(403);
+    expect(domain.details.providerCode).toBe("validation_error");
+    expect(domain.details.providerMessage).toContain("domain is not verified");
+    expect(domain.details.providerMessage).not.toContain("person@example.com");
+    expect(domain.details.providerMessage).not.toContain("re_abcdef123456");
+
+    const key = await sendError(403, { name: "invalid_api_key", message: "API key is invalid" });
+    expect(key.code).toBe("resend_auth");
+  });
+
+  it("reports HTTP status and duration on success and failure", async () => {
+    const ok = await createResendMailer({
+      apiKey: "k",
+      fetch: mockFetch(200, { id: "abc" }) as unknown as typeof fetch,
+    }).send(message);
+    expect(ok.httpStatus).toBe(200);
+    expect(typeof ok.durationMs).toBe("number");
+    const failed = await sendError(429, { name: "rate_limit_exceeded", message: "slow down" });
+    expect(failed.details.httpStatus).toBe(429);
+    expect(typeof failed.details.durationMs).toBe("number");
   });
 
   it("handles non-JSON error bodies, network failures and timeouts", async () => {

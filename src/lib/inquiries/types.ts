@@ -21,6 +21,10 @@ export interface InquiryDoc {
   businessEmailSentAt: Timestamp | null;
   businessEmailLastError: string | null;
   businessEmailProviderMessageId: string | null;
+  businessEmailLastHttpStatus?: number | null;
+  businessEmailLastErrorCode?: string | null;
+  businessEmailLastErrorMessage?: string | null;
+  businessEmailLastDurationMs?: number | null;
 
   confirmationEmailStatus: EmailStatus;
   confirmationEmailAttempts: number;
@@ -28,6 +32,10 @@ export interface InquiryDoc {
   confirmationEmailSentAt: Timestamp | null;
   confirmationEmailLastError: string | null;
   confirmationEmailProviderMessageId: string | null;
+  confirmationEmailLastHttpStatus?: number | null;
+  confirmationEmailLastErrorCode?: string | null;
+  confirmationEmailLastErrorMessage?: string | null;
+  confirmationEmailLastDurationMs?: number | null;
 
   idempotencyKeyHash: string;
   contentHash: string;

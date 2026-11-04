@@ -17,6 +17,15 @@ export interface MailMessage {
 
 export interface MailResult {
   providerMessageId: string | null;
+  httpStatus?: number | null;
+  durationMs?: number | null;
+}
+
+export interface MailerErrorDetails {
+  httpStatus?: number | null;
+  providerCode?: string | null;
+  providerMessage?: string | null;
+  durationMs?: number | null;
 }
 
 export interface Mailer {
@@ -28,6 +37,7 @@ export class MailerError extends Error {
     message: string,
     readonly code: string,
     readonly retryable = true,
+    readonly details: MailerErrorDetails = {},
   ) {
     super(message);
     this.name = "MailerError";
