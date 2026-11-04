@@ -57,6 +57,10 @@ Set in Vercel for the **Production** environment only. All are server-only (no `
 
 Resend errors are mapped to stored codes (`resend_auth`, `resend_rate_limited`, `resend_server_error`, `resend_rejected`, `resend_timeout`, `resend_network`) and the email is marked `failed` and retryable; visitors never see provider details and still receive their reference number.
 
+## Troubleshooting a generic submit error
+
+Server failures log `[inquiries] failure { stage, name, code, message }` (no request bodies or email addresses) in Vercel runtime logs. `stage` is one of `firestore_client`, `idempotency_lookup`, `rate_limit`, `create_inquiry`, `email_delivery`. Typical causes: missing/incorrect `GCP_*` or `FIREBASE_PROJECT_ID` env vars, OIDC federation not enabled (or no redeploy after enabling), STS `invalid_grant` (issuer/audience/subject mismatch with the provider condition), or the service account lacking `roles/datastore.user`. Google-side evidence: successful token impersonation shows up in Cloud Logging as `iamcredentials.googleapis.com GenerateAccessToken` for the service account.
+
 ## Retrying unsent emails
 
 - Re-submitting the same form (same idempotency key) retries only unsent emails.

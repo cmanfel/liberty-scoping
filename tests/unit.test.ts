@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { formatReference, referenceYearFor } from "@/lib/inquiries/reference";
 import {
   isValidEmail,
@@ -13,7 +13,7 @@ import {
   escapeHtml,
 } from "@/lib/inquiries/templates";
 import { MailerNotConfiguredError, getMailer } from "@/lib/inquiries/mailer";
-import { isAllowedOrigin } from "@/lib/inquiries/http";
+import { isAllowedOrigin, logFailure } from "@/lib/inquiries/http";
 import { readConfig } from "@/lib/inquiries/config";
 
 const KEY = "a".repeat(32);
@@ -152,5 +152,21 @@ describe("origin check", () => {
     expect(isAllowedOrigin(req({ origin: "https://preview.vercel.app", host: "preview.vercel.app" }), config)).toBe(true);
     expect(isAllowedOrigin(req({ origin: "https://evil.example", host: "libertyscoping.com" }), config)).toBe(false);
     expect(isAllowedOrigin(req({}), config)).toBe(false);
+  });
+});
+
+describe("failure logging", () => {
+  it("logs stage, name, code and a redacted truncated message", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const error = Object.assign(new Error("denied for person@example.com " + "x".repeat(1000)), { code: 403 });
+    logFailure("idempotency_lookup", error);
+    const [label, details] = spy.mock.calls[0] as [string, Record<string, unknown>];
+    expect(label).toBe("[inquiries] failure");
+    expect(details.stage).toBe("idempotency_lookup");
+    expect(details.code).toBe(403);
+    expect(String(details.message)).not.toContain("person@example.com");
+    expect(String(details.message)).toContain("[email]");
+    expect(String(details.message).length).toBeLessThanOrEqual(400);
+    spy.mockRestore();
   });
 });
