@@ -1,4 +1,5 @@
 import { FieldValue, Timestamp, type Firestore } from "@google-cloud/firestore";
+import { runTransactionWithRetry } from "./transactions";
 import { COLLECTIONS } from "./constants";
 
 export interface RateLimitRule {
@@ -32,7 +33,7 @@ export async function consumeRateLimit(
     .collection(COLLECTIONS.rateLimits)
     .doc(`${scope}-${subjectHash.slice(0, 40)}-${windowStart}`);
 
-  return db.runTransaction(async (tx) => {
+  return runTransactionWithRetry(db, async (tx) => {
     const snap = await tx.get(ref);
     const count = snap.exists ? Number(snap.get("count") ?? 0) : 0;
     if (count >= rule.max) return { allowed: false, retryAfterSeconds };

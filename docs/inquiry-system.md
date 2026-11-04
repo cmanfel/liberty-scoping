@@ -28,6 +28,12 @@ No rules or index changes are needed: `firestore.rules` in Stenofy already denie
 
 Vercel OIDC token -> Google STS (Workload Identity Federation) -> impersonates `liberty-scoping-inquiries@stenofy-4e684.iam.gserviceaccount.com`, which has only `roles/datastore.user`. See `src/lib/inquiries/firestore.ts`. With `FIRESTORE_EMULATOR_HOST` set (local/tests) it talks to the emulator only.
 
+### Transport notes (REST, bundling, contention)
+
+- The client uses the REST transport (`preferRest: true`). `next.config.ts` lists `@google-cloud/firestore`, `google-gax`, `google-auth-library`, `proto3-json-serializer`, `protobufjs` and `long` in `serverExternalPackages`. **Do not remove this**: when bundled, the minifier renames `Long`, `proto3-json-serializer` no longer recognises integers, and every write fails with `toProto3JSON: don't know how to convert value N` (stage `rate_limit`). The `test:e2e` suite reproduces this against the production bundle.
+- Transactions go through `runTransactionWithRetry` (`src/lib/inquiries/transactions.ts`): the client's own retry treats REST HTTP 409 like RESOURCE_EXHAUSTED and waits up to a minute, longer than a serverless request. We run each attempt with `maxAttempts: 1` and retry contention ourselves with short jittered backoff (max 8 attempts).
+- The two emails of one inquiry are sent sequentially, not concurrently, to avoid claim-transaction contention on the same document.
+
 ## Environment variables
 
 Set in Vercel for the **Production** environment only. All are server-only (no `NEXT_PUBLIC_` prefix).
@@ -71,7 +77,10 @@ Server failures log `[inquiries] failure { stage, name, code, message }` (no req
 ```bash
 npm test                 # unit tests (integration tests skip without the emulator)
 npm run test:emulator    # everything, against the local Firestore emulator (needs Java 21+)
+npm run test:e2e         # builds, starts the production server (`next start`) and posts inquiries against the emulator over REST
 ```
+
+Integration tests use the REST transport so they exercise the same serialization as production.
 
 The emulator project is `demo-liberty-scoping`; tests refuse to run against anything but a local emulator host and use only the mock mailer or a mocked `fetch` (no real Resend calls).
 

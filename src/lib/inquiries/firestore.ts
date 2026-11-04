@@ -20,7 +20,8 @@ export function getFirestore(): Firestore {
   const env = readFirestoreEnv();
 
   if (env.emulatorHost) {
-    cached = new Firestore({ projectId: env.projectId });
+    // Same REST transport as production so local/CI runs exercise the same serializer.
+    cached = new Firestore({ projectId: env.projectId, preferRest: true });
     return cached;
   }
 

@@ -1,4 +1,5 @@
 import { FieldValue, Timestamp, type Firestore } from "@google-cloud/firestore";
+import { runTransactionWithRetry } from "./transactions";
 import { COLLECTIONS, EMAIL_RULES } from "./constants";
 import { REFERENCE_TIME_ZONE, formatReference, referenceYearFor } from "./reference";
 import { saltedHash, sha256Hex } from "./hash";
@@ -82,7 +83,7 @@ export async function createInquiry(
   const inquiryRef = db.collection(COLLECTIONS.inquiries).doc();
   const contentHash = contentHashFor(input);
 
-  return db.runTransaction(async (tx) => {
+  return runTransactionWithRetry(db, async (tx) => {
     const [idemSnap, counterSnap] = await Promise.all([
       tx.get(idemRef),
       tx.get(counterRef),
@@ -193,7 +194,7 @@ async function claimEmail(
 ): Promise<ClaimResult> {
   const ref = db.collection(COLLECTIONS.inquiries).doc(inquiryId);
   const f = FIELDS[kind];
-  return db.runTransaction(async (tx) => {
+  return runTransactionWithRetry(db, async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) throw new Error(`Inquiry ${inquiryId} not found`);
     const status = snap.get(f.status) as EmailStatus;
@@ -285,10 +286,11 @@ export async function deliverInquiryEmails(
   inquiryId: string,
   deps: DeliveryDeps,
 ): Promise<DeliveryOutcome> {
-  const [business, confirmation] = await Promise.all([
-    sendOne(db, inquiryId, "business", deps),
-    sendOne(db, inquiryId, "confirmation", deps),
-  ]);
+  // Sequential on purpose: both emails claim and update the same inquiry
+  // document inside transactions, and running them concurrently makes the two
+  // transactions contend for that document's lock (multi-second stalls).
+  const business = await sendOne(db, inquiryId, "business", deps);
+  const confirmation = await sendOne(db, inquiryId, "confirmation", deps);
   return { business, confirmation };
 }
 
