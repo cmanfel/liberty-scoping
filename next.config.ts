@@ -9,6 +9,18 @@ const longCache = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Keep the Firestore/protobuf stack out of the server bundle. When bundled and
+  // minified, protobuf's \`Long\` class is renamed and proto3-json-serializer
+  // (which matches on constructor.name === "Long") throws "toProto3JSON: don't
+  // know how to convert value N" for every integer write over the REST transport.
+  serverExternalPackages: [
+    "@google-cloud/firestore",
+    "google-gax",
+    "google-auth-library",
+    "proto3-json-serializer",
+    "protobufjs",
+    "long",
+  ],
   images: {
     formats: ["image/avif", "image/webp"],
   },

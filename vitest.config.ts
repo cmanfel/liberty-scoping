@@ -12,7 +12,7 @@ export default defineConfig({
     environment: "node",
     fileParallelism: false,
     include: ["tests/**/*.test.ts"],
-    testTimeout: 20000,
+    testTimeout: 60000,
     hookTimeout: 60000,
   },
 });

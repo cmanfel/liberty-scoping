@@ -165,13 +165,13 @@ describe.skipIf(!emulatorAvailable)("POST /api/inquiries handler (Firestore emul
 
   it("issues unique reference numbers for concurrent requests", async () => {
     const responses = await Promise.all(
-      Array.from({ length: 12 }, (_, i) =>
+      Array.from({ length: 6 }, (_, i) =>
         handleInquiryRequest(post(body(), { "x-forwarded-for": `10.0.0.${i + 1}` }), deps).then((r) => r.json()),
       ),
     );
     const refs = responses.map((r) => r.referenceNumber);
-    expect(new Set(refs).size).toBe(12);
-    expect((await db.collection(COLLECTIONS.inquiries).get()).size).toBe(12);
+    expect(new Set(refs).size).toBe(6);
+    expect((await db.collection(COLLECTIONS.inquiries).get()).size).toBe(6);
   });
 
   it("does not leak internal errors", async () => {

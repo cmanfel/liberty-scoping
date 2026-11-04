@@ -9,7 +9,8 @@ export function testDb(): Firestore {
   if (!host || !/^(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(host)) {
     throw new Error("Integration tests require the local Firestore emulator");
   }
-  return new Firestore({ projectId: TEST_PROJECT });
+  // REST transport, as used in production (not gRPC), so serialization matches.
+  return new Firestore({ projectId: TEST_PROJECT, preferRest: true });
 }
 
 export async function clearEmulator(): Promise<void> {

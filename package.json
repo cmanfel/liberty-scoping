@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:emulator": "firebase emulators:exec --only firestore --project demo-liberty-scoping \"vitest run\""
+    "test:emulator": "firebase emulators:exec --only firestore --project demo-liberty-scoping \"vitest run\"",
+    "test:e2e": "npm run build && firebase emulators:exec --only firestore --project demo-liberty-scoping \"BUNDLE_E2E=1 vitest run tests/bundle.e2e.test.ts\""
   },
   "dependencies": {
     "@google-cloud/firestore": "^8.7.1",
